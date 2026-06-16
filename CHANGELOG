@@ -6,6 +6,7 @@ New features:
 -------------
 
 - sepa_subsetrow (still experimental): add strategy that enumerates all SR cuts (new default)
+- mastersepacut interface: handle removable cuts
 
 Bug fixes
 ---------

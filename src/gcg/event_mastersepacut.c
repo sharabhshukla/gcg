@@ -40,6 +40,7 @@
 #include "scip/struct_tree.h"
 #include "gcg/event_mastersepacut.h"
 #include "gcg/gcg.h"
+#include "gcg/cons_masterbranch.h"
 #include "gcg/mastersepacut.h"
 #include "gcg/pricer_gcg.h"
 #include "gcg/struct_gcg.h"
@@ -229,6 +230,73 @@ SCIP_RETCODE eventRowAddedToLP(
 
 
 
+/** removes a mastersepacut from active cuts when its row is removed from the LP
+ *
+ * In contrast to GCGeventmastersepacutShrinkActiveMastersepacuts() this may remove a cut from the
+ * middle of the active cuts (a removable row aged out of the LP within a node), so the order of the
+ * remaining cuts is preserved (shift) and the masterbranch nodes are notified to keep their
+ * firstnewcut bookkeeping consistent.
+ */
+static
+SCIP_RETCODE eventRowDeletedFromLP(
+   GCG*                    gcg,              /**< GCG data structure */
+   SCIP_EVENTHDLRDATA*     eventhdlrdata,    /**< mastersepacut eventhandler data */
+   SCIP_EVENT*             event             /**< row deleted from LP event */
+   )
+{
+   SCIP* scip;
+   SCIP_ROW* row;
+   int idx;
+   int j;
+
+   assert(gcg != NULL);
+   assert(eventhdlrdata != NULL);
+   assert(event != NULL);
+   assert(SCIPeventGetType(event) == SCIP_EVENTTYPE_ROWDELETEDLP);
+
+   scip = GCGgetMasterprob(gcg);
+
+   /* row deletions during problem setup/teardown are handled by the node lifecycle, not here */
+   if( SCIPgetStage(scip) != SCIP_STAGE_SOLVING || !SCIPisLPConstructed(scip) )
+      return SCIP_OKAY;
+
+   row = SCIPeventGetRow(event);
+   if( SCIProwGetOriginSepa(row) == NULL )
+      return SCIP_OKAY;
+
+   /* find the active mastersepacut that corresponds to the deleted row (if any) */
+   idx = -1;
+   for( j = 0; j < eventhdlrdata->nactivecuts; ++j )
+   {
+      if( GCGextendedmasterconsGetRow(eventhdlrdata->activecuts[j]) == row )
+      {
+         idx = j;
+         break;
+      }
+   }
+
+   /* the row does not belong to an active mastersepacut (e.g. an original separator cut) */
+   if( idx < 0 )
+      return SCIP_OKAY;
+
+   SCIPdebugMessage("row deleted event: remove row %s from active cuts (index %d of %d)\n",
+      SCIProwGetName(row), idx, eventhdlrdata->nactivecuts);
+
+   /* keep the firstnewcut indices of the active masterbranch nodes consistent with the removal */
+   SCIP_CALL( GCGconsMasterbranchActiveCutRemoved(gcg, idx) );
+
+   /* remove the cut from active cuts, preserving the order of the remaining cuts; if its row is
+    * re-added to the LP later, the row-added event re-inserts it from the generated cuts */
+   SCIP_CALL( GCGreleaseMastersepacut(gcg, &(eventhdlrdata->activecuts[idx])) );
+   for( j = idx; j < eventhdlrdata->nactivecuts - 1; ++j )
+      eventhdlrdata->activecuts[j] = eventhdlrdata->activecuts[j + 1];
+   (eventhdlrdata->nactivecuts)--;
+   eventhdlrdata->activecuts[eventhdlrdata->nactivecuts] = NULL;
+
+   return SCIP_OKAY;
+}
+
+
 /*
  * Callback methods of event handler
  */
@@ -268,8 +336,8 @@ SCIP_DECL_EVENTEXIT(eventExitMastersepacutUpdate)
    eventhdlrdata = SCIPeventhdlrGetData(eventhdlr);
    assert(eventhdlrdata != NULL);
 
-   /* notify SCIP that your event handler wants to drop the event type 'row added to lp' */
-   SCIP_CALL( SCIPdropEvent(scip, SCIP_EVENTTYPE_ROWADDEDLP, eventhdlr, NULL, -1) );
+   /* notify SCIP that your event handler wants to drop the row added/deleted to/from LP events */
+   SCIP_CALL( SCIPdropEvent(scip, SCIP_EVENTTYPE_ROWADDEDLP | SCIP_EVENTTYPE_ROWDELETEDLP, eventhdlr, NULL, -1) );
 
    /* free all the arrays */
    SCIPdebugMessage("event free: free mem (%i) for activecuts\n", eventhdlrdata->activecutssize);
@@ -310,8 +378,8 @@ SCIP_DECL_EVENTINIT(eventInitMastersepacutUpdate)
    eventhdlrdata->generatedcutssize = initialsize;
    eventhdlrdata->globalcutsreinserted = FALSE;
 
-   /* notify SCIP that event handler wants to react on the event typ 'row added to LP' */
-   SCIP_CALL( SCIPcatchEvent(scip, SCIP_EVENTTYPE_ROWADDEDLP, eventhdlr, NULL, NULL) );
+   /* notify SCIP that event handler wants to react on the row added/deleted to/from LP events */
+   SCIP_CALL( SCIPcatchEvent(scip, SCIP_EVENTTYPE_ROWADDEDLP | SCIP_EVENTTYPE_ROWDELETEDLP, eventhdlr, NULL, NULL) );
 
    return SCIP_OKAY;
 }
@@ -371,7 +439,7 @@ SCIP_DECL_EVENTEXEC(eventExecEvent)
    assert(eventhdlr != NULL);
    assert(strcmp(SCIPeventhdlrGetName(eventhdlr), EVENTHDLR_NAME) == 0);
    assert(event != NULL);
-   assert(SCIPeventGetType(event) == SCIP_EVENTTYPE_ROWADDEDLP);
+   assert(SCIPeventGetType(event) == SCIP_EVENTTYPE_ROWADDEDLP || SCIPeventGetType(event) == SCIP_EVENTTYPE_ROWDELETEDLP);
 
    eventhdlrdata = SCIPeventhdlrGetData(eventhdlr);
    assert( eventhdlrdata != NULL );
@@ -380,6 +448,9 @@ SCIP_DECL_EVENTEXEC(eventExecEvent)
    {
       case SCIP_EVENTTYPE_ROWADDEDLP:
          SCIP_CALL( eventRowAddedToLP(eventhdlrdata->gcg, eventhdlrdata, event) );
+         break;
+      case SCIP_EVENTTYPE_ROWDELETEDLP:
+         SCIP_CALL( eventRowDeletedFromLP(eventhdlrdata->gcg, eventhdlrdata, event) );
          break;
       default:
          SCIPerrorMessage("Encountered Event not listened to.\n");

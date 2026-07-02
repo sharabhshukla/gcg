@@ -130,7 +130,9 @@ SCIP_DECL_VARDELTRANS(gcgvardeltrans)
    assert((*vardata)->vartype == GCG_VARTYPE_MASTER);
    SCIPfreeBlockMemoryArrayNull(scip, &((*vardata)->data.mastervardata.origvals), (*vardata)->data.mastervardata.maxorigvars);
    SCIPfreeBlockMemoryArrayNull(scip, &((*vardata)->data.mastervardata.origvars), (*vardata)->data.mastervardata.maxorigvars);
-   SCIPhashmapFree(&((*vardata)->data.mastervardata.origvar2val));
+
+   if( (*vardata)->data.mastervardata.origvar2val != NULL )
+      SCIPhashmapFree(&((*vardata)->data.mastervardata.origvar2val));
 
    SCIPfreeBlockMemory(scip, vardata);
 

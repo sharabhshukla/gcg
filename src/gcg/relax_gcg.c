@@ -1363,7 +1363,7 @@ SCIP_RETCODE createMasterProblem(
       SCIP_CALL( SCIPsetIntParam(GCGgetOrigprob(gcg), "heuristics/trysol/freq", 1) );
 
       /* disabling pricing problem aggregation */
-      SCIP_CALL( SCIPsetBoolParam(GCGgetOrigprob(gcg), "relaxing/gcg/aggregation", FALSE) );
+      SCIP_CALL( SCIPsetBoolParam(GCGgetOrigprob(gcg), "relaxing/gcg/aggregation/enabled", FALSE) );
    }
 
    return SCIP_OKAY;
@@ -1395,6 +1395,15 @@ SCIP_RETCODE createPricingProblem(
       SCIP_CALL( SCIPcreate(pricingscip) );
       SCIP_CALL( SCIPincludeDefaultPlugins(*pricingscip) );
       SCIP_CALL( GCGsetPricingProblemParameters(GCGdecompGetType(relaxdata->decomp), *pricingscip, clocktype, infinity, epsilon, sumepsilon, feastol, lpfeastolfactor, dualfeastol, enableppcuts) );
+
+      if( relaxdata->mode == GCG_DECMODE_BENDERS )
+      {
+#if SCIP_VERSION >= 1100
+         SCIP_CALL( SCIPsetBoolParam(*pricingscip, "symmetries/enabled", FALSE) );
+#else
+         SCIP_CALL( SCIPsetIntParam(*pricingscip, "misc/usesymmetry", 0) );
+#endif
+      }
    }
    SCIP_CALL( SCIPcreateProb(*pricingscip, name, NULL, NULL, NULL, NULL, NULL, NULL, NULL) );
 
@@ -5043,6 +5052,12 @@ SCIP_RETCODE GCGrelaxUpdateCurrentSol(
             /* looping over all master variables to get the original variable for branching candidates */
             for( i = 0; i < nmastervars; i++ )
             {
+               /* skip variables not created by GCG, e.g. the auxiliary variables of the Benders' decomposition
+                * framework, which have no counterpart in the original problem
+                */
+               if( !GCGvarIsMaster(mastervars[i]) )
+                  continue;
+
                masterorigvars = GCGmasterVarGetOrigvars(mastervars[i]);
                nmasterorigvars = GCGmasterVarGetNOrigvars(mastervars[i]);
 

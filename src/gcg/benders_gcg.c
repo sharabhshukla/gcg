@@ -253,6 +253,11 @@ SCIP_RETCODE setOriginalProblemMasterValues(
    /* looping through all variables to update the values in the original solution */
    for( i = 0; i < nvars; i++ )
    {
+      /* the master problem also contains variables that were not created by GCG, in particular the auxiliary variables
+       * added by SCIP's Benders' framework */
+      if( !GCGvarIsMaster(vars[i]) )
+         continue;
+
       norigvars = GCGmasterVarGetNOrigvars(vars[i]);
       if( norigvars > 0 )
       {
@@ -266,7 +271,6 @@ SCIP_RETCODE setOriginalProblemMasterValues(
           * been performed. */
          assert(norigvars == 1);
          assert(origvals[0] == 1.0);
-         assert(GCGvarIsMaster(vars[i]));
          assert(!SCIPisInfinity(origprob, vals[i]));
 
          SCIPdebugMsg(masterprob, "setting the value of <%s> (master variable <%s>) to %g in the original solution.\n",
@@ -555,6 +559,7 @@ static
 SCIP_DECL_BENDERSINITPRE(bendersInitpreGcg)
 {  /*lint --e{715}*/
    SCIP_BENDERSDATA* bendersdata;
+   SCIP_VAR* masterauxvar;
    int nsubproblems;
    int i;
 
@@ -563,10 +568,17 @@ SCIP_DECL_BENDERSINITPRE(bendersInitpreGcg)
 
    bendersdata = SCIPbendersGetData(benders);
    nsubproblems = SCIPbendersGetNSubproblems(benders);
+   masterauxvar = SCIPbenderGetMasterAuxiliaryVar(benders);
 
    for( i = 0; i < nsubproblems; i++ )
    {
       SCIP_CALL( GCGaddDataAuxiliaryVar(bendersdata->gcg, SCIPbendersGetAuxiliaryVar(benders, i), i) );
+   }
+
+   /* set GCG vardata, @todo SCIP's dummy vardata is lost */
+   if( masterauxvar != NULL )
+   {
+      SCIP_CALL( GCGaddDataAuxiliaryVar(bendersdata->gcg, masterauxvar, -1) );
    }
 
    return SCIP_OKAY;
@@ -738,31 +750,31 @@ SCIP_RETCODE GCGincludeBendersGcg(
 {
    SCIP_BENDERSDATA* bendersdata;
    SCIP_BENDERS* benders;
-   SCIP* origprob;
+   SCIP* bendersmasterprob;
 
-   origprob = GCGgetOrigprob(gcg);
+   bendersmasterprob = GCGgetBendersMasterprob(gcg);
 
    /* create gcg Benders' decomposition data */
-   SCIP_CALL( SCIPallocMemory(origprob, &bendersdata) );
+   SCIP_CALL( SCIPallocMemory(bendersmasterprob, &bendersdata) );
    bendersdata->gcg = gcg;
    bendersdata->relaxsol = NULL;
 
    benders = NULL;
 
    /* include Benders' decomposition */
-   SCIP_CALL( SCIPincludeBendersBasic(origprob, &benders, BENDERS_NAME, BENDERS_DESC, BENDERS_PRIORITY,
+   SCIP_CALL( SCIPincludeBendersBasic(bendersmasterprob, &benders, BENDERS_NAME, BENDERS_DESC, BENDERS_PRIORITY,
          BENDERS_CUTLP, BENDERS_CUTPSEUDO, BENDERS_CUTRELAX, BENDERS_SHAREAUXVARS, bendersGetvarGcg,
          bendersCreatesubGcg, bendersdata) );
    assert(benders != NULL);
 
    /* set non fundamental callbacks via setter functions */
-   SCIP_CALL( SCIPsetBendersFree(origprob, benders, bendersFreeGcg) );
-   SCIP_CALL( SCIPsetBendersInitpre(origprob, benders, bendersInitpreGcg) );
-   SCIP_CALL( SCIPsetBendersExitsol(origprob, benders, bendersExitsolGcg) );
-   SCIP_CALL( SCIPsetBendersPostsolve(origprob, benders, bendersPostsolveGcg) );
+   SCIP_CALL( SCIPsetBendersFree(bendersmasterprob, benders, bendersFreeGcg) );
+   SCIP_CALL( SCIPsetBendersInitpre(bendersmasterprob, benders, bendersInitpreGcg) );
+   SCIP_CALL( SCIPsetBendersExitsol(bendersmasterprob, benders, bendersExitsolGcg) );
+   SCIP_CALL( SCIPsetBendersPostsolve(bendersmasterprob, benders, bendersPostsolveGcg) );
 
    /* including the default cuts for Benders' decomposition */
-   SCIP_CALL( SCIPincludeBendersDefaultCuts(origprob, benders) );
+   SCIP_CALL( SCIPincludeBendersDefaultCuts(bendersmasterprob, benders) );
 
    return SCIP_OKAY;
 }

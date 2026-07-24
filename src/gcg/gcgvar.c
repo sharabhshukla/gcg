@@ -1573,6 +1573,12 @@ SCIP_RETCODE GCGcreateMasterVar(
    }
    assert(j == newvardata->data.mastervardata.norigvars);
 
+#ifndef NDEBUG
+   for( i = 1; i < newvardata->data.mastervardata.norigvars; ++i )
+      assert(SCIPvarGetProbindex(newvardata->data.mastervardata.origvars[i-1])
+           < SCIPvarGetProbindex(newvardata->data.mastervardata.origvars[i]));
+#endif
+
    return SCIP_OKAY;
 }
 

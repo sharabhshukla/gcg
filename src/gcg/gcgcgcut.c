@@ -250,6 +250,11 @@ SCIP_RETCODE GCGchvatalGomoryCutGetVariableCoefficient(
    SCIP_CALL( SCIPgetConsVals(pricingscip, pricingconss[0], pricingconscoeffs, npricingconsvars, &success) );
    assert(success);
 
+#ifndef NDEBUG
+   for( i = 1; i < nvars; i++ )
+      assert(SCIPvarCompare(vars[i-1], vars[i]) < 0);
+#endif
+
    /* compute w^TAx using the pricing constraint */
    for( i = 0; i < npricingconsvars; i++ )
    {

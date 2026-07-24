@@ -818,6 +818,31 @@ SCIP_RETCODE checkIdenticalBlocks(
             SCIPdebugMessage("Var <%s> is mapped to <%s> (<%s>).\n", SCIPvarGetName(origvar), SCIPvarGetName(repvar),
                   SCIPvarGetName(pricingvar));
          }
+
+#ifndef NDEBUG
+         /* assert that the representative variable map is order-preserving. */
+         {
+            int nbvars = GCGconshdlrDecompPartialdecGetNVarsForBlock(partialdec, b);
+            SCIP_Real* bprobidx;
+            int* bpricingidx;
+            int kk;
+
+            SCIP_CALL( SCIPallocBufferArray(scip, &bprobidx, nbvars) );
+            SCIP_CALL( SCIPallocBufferArray(scip, &bpricingidx, nbvars) );
+            for( kk = 0; kk < nbvars; ++kk )
+            {
+               SCIP_VAR* bvar = GCGconshdlrDecompPartialdecGetOrigVarForBlock(partialdec, b, kk);
+               bprobidx[kk] = (SCIP_Real) SCIPvarGetProbindex(bvar);
+               bpricingidx[kk] = SCIPvarGetIndex(GCGoriginalVarGetPricingVar(bvar));
+            }
+            SCIPsortRealInt(bprobidx, bpricingidx, nbvars);
+            for( kk = 1; kk < nbvars; ++kk )
+               assert(bpricingidx[kk-1] < bpricingidx[kk]);
+
+            SCIPfreeBufferArray(scip, &bpricingidx);
+            SCIPfreeBufferArray(scip, &bprobidx);
+         }
+#endif
       }
    }
 

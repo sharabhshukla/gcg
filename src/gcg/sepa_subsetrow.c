@@ -97,6 +97,7 @@ struct SCIP_SepaData
    SCIP_Bool               onlyaggregated;      /**< indicates if separator should only run on aggregated problems */
    SCIP_CONS**             origmasterconss;     /**< array of (filtered) orig master conss (is only allocated if not equal to data of relaxator) */
    SCIP_CONS**             masterconss;         /**< array of (filtered) master conss (is only allocated if not equal to data of relaxator) */
+   int*                    conssfullindices;    /**< for each (filtered) master cons its index in the relaxator's master conss array (only allocated if filtered) */
    int                     nmasterconss;        /**< number of (filtered) master conss */
    SCIP_Bool               filteredmasterconss; /**< do origmasterconss and masterconss point to allocated arrays? */
    SCIP_Bool               paramschgd;          /**< have the parameters been changed? */
@@ -795,9 +796,16 @@ SCIP_DECL_SEPAEXIT(sepaExitSubsetrow)
 
    if( sepadata->origmasterconss != NULL && sepadata->filteredmasterconss )
    {
+      SCIPfreeBlockMemoryArray(scip, &sepadata->conssfullindices, sepadata->nmasterconss);
       SCIPfreeBlockMemoryArray(scip, &sepadata->origmasterconss, sepadata->nmasterconss);
       SCIPfreeBlockMemoryArray(scip, &sepadata->masterconss, sepadata->nmasterconss);
    }
+
+   sepadata->origmasterconss = NULL;
+   sepadata->masterconss = NULL;
+   sepadata->conssfullindices = NULL;
+   sepadata->nmasterconss = 0;
+   sepadata->filteredmasterconss = FALSE;
 
    return SCIP_OKAY;
 }
@@ -922,6 +930,7 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpSubsetrow)
          sepadata->filteredmasterconss = TRUE;
          SCIP_CALL( SCIPallocBlockMemoryArray(scip, &sepadata->origmasterconss, nmasterconss) );
          SCIP_CALL( SCIPallocBlockMemoryArray(scip, &sepadata->masterconss, nmasterconss) );
+         SCIP_CALL( SCIPallocBlockMemoryArray(scip, &sepadata->conssfullindices, nmasterconss) );
 
          /* ignore constraints that contain variables of not aggregated pricing problems */
          sepadata->nmasterconss = 0;
@@ -948,7 +957,25 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpSubsetrow)
             {
                sepadata->origmasterconss[sepadata->nmasterconss] = origmasterconss[i];
                sepadata->masterconss[sepadata->nmasterconss] = masterconss[i];
+               sepadata->conssfullindices[sepadata->nmasterconss] = i;
                sepadata->nmasterconss++;
+            }
+         }
+
+         /* shrink the arrays to the filtered size, so that they are freed with the correct size in sepaExitSubsetrow */
+         if( sepadata->nmasterconss < nmasterconss )
+         {
+            if( sepadata->nmasterconss > 0 )
+            {
+               SCIP_CALL( SCIPreallocBlockMemoryArray(scip, &sepadata->origmasterconss, nmasterconss, sepadata->nmasterconss) );
+               SCIP_CALL( SCIPreallocBlockMemoryArray(scip, &sepadata->masterconss, nmasterconss, sepadata->nmasterconss) );
+               SCIP_CALL( SCIPreallocBlockMemoryArray(scip, &sepadata->conssfullindices, nmasterconss, sepadata->nmasterconss) );
+            }
+            else
+            {
+               SCIPfreeBlockMemoryArray(scip, &sepadata->conssfullindices, nmasterconss);
+               SCIPfreeBlockMemoryArray(scip, &sepadata->masterconss, nmasterconss);
+               SCIPfreeBlockMemoryArray(scip, &sepadata->origmasterconss, nmasterconss);
             }
          }
       }
@@ -1013,6 +1040,14 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpSubsetrow)
       // determine the pricing variables and their coefficients for the pricing constraints
       SCIP_CALL( computePricingConssCoefficients(gcg, sepadata->origmasterconss, cutindices[i]->indices, cutindices[i]->nindices,
                                                  weights, mappricingvarxcoeff) );
+
+      /* translate them from the filtered index space */
+      if( sepadata->filteredmasterconss )
+      {
+         int j;
+         for( j = 0; j < cutindices[i]->nindices; j++ )
+            cutindices[i]->indices[j] = sepadata->conssfullindices[cutindices[i]->indices[j]];
+      }
 
       // add cut to separation store and corresponding master separator cut to sepacut event handler
       SCIP_CALL( GCGcreateChvatalGomoryCut(gcg, &mastercut, sepadata->sepa, NULL, weights, cutindices[i]->indices, cutindices[i]->nindices) );
@@ -1116,6 +1151,7 @@ SCIP_RETCODE SCIPincludeSepaSubsetrow(
    sepadata->enable = FALSE;
    sepadata->origmasterconss = NULL;
    sepadata->masterconss = NULL;
+   sepadata->conssfullindices = NULL;
    sepadata->nmasterconss = 0;
    sepadata->filteredmasterconss = FALSE;
    sepadata->paramschgd = TRUE;

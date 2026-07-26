@@ -17,11 +17,13 @@ Miscellaneous
 -------------
 
 - modified ObjPricerGcg::setPricingObjs() to use buffer arrays instead of calling SCIPaddVarObj() multiple times
+- reuse existing columns for translated solutions of the original problem (see new parameter)
 
 New/changed parameters:
 -----------------------
 
 - sepa_subsetrow: renamed parameters ('maxsepacuts' to 'maxcutcands', 'maxsepacutsroot' to 'maxcutcandsroot', 'maxcutcands' to 'maxcuts')
+- new parameter "pricing/masterpricer/preventduplicatecols" (default: TRUE)
 
 
 @page RN40 Release notes for GCG 4.0

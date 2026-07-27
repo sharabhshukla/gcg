@@ -5098,7 +5098,6 @@ SCIP_RETCODE ObjPricerGcg::ensureSizeArtificialvars(
    )
 {
    assert(pricerdata != NULL);
-   assert(pricerdata->artificialvars != NULL);
 
    if( pricerdata->maxartificialvars < size )
    {

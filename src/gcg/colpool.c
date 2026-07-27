@@ -292,7 +292,6 @@ SCIP_RETCODE GCGcolpoolPrice(
    )
 {
    GCG_COL* col;
-   int firstunproc;
    int c;
 
    assert(colpool != NULL);
@@ -303,7 +302,7 @@ SCIP_RETCODE GCGcolpoolPrice(
 
    colpool->ncalls++;
 
-   SCIPdebugMessage("separating%s col pool %p with %d cols, beginning with col %d\n", ( sol == NULL ) ? "" : " solution from", (void*)colpool, colpool->ncols, firstunproc);
+   SCIPdebugMessage("separating%s col pool %p with %d cols\n", ( sol == NULL ) ? "" : " solution from", (void*)colpool, colpool->ncols);
 
    /* start timing */
    SCIP_CALL( SCIPstartClock(colpool->scip, colpool->poolclock) );

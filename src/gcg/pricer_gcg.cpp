@@ -122,6 +122,8 @@ using namespace scip;
                                                      *   if pricing problems cannot be aggregated */
 
 #define DEFAULT_USECOLPOOL               TRUE       /**< should the colpool be checked for negative redcost cols before solving the pricing problems? */
+#define DEFAULT_PREVENTDUPLICATECOLS     TRUE       /**< should existing master variables be reused when transferring an original
+                                                     *  solution instead of creating duplicate columns? */
 #define DEFAULT_COLPOOL_AGELIMIT         100        /**< default age limit for columns in column pool */
 
 #define DEFAULT_PRICE_ORTHOFAC           0.0
@@ -194,6 +196,8 @@ struct SCIP_PricerData
    /* variables used for statistics */
    SCIP_CLOCK*           freeclock;          /**< time for freeing pricing problems */
    SCIP_CLOCK*           transformclock;     /**< time for transforming pricing problems */
+   SCIP_CLOCK*           duplicatecolclock;  /**< time for detecting duplicate columns when transferring original solutions */
+   int                   nduplicatecols;     /**< number of master variables not created because an identical column existed */
    int                   solvedsubmipsoptimal; /**< number of optimal pricing runs */
    int                   solvedsubmipsheur;  /**< number of heuristical pricing runs*/
    int                   calls;              /**< number of total pricing calls */
@@ -220,6 +224,8 @@ struct SCIP_PricerData
    SCIP_Bool             stabilization;      /**< should stabilization be used */
    SCIP_Bool             stabilizationtree;  /**< should stabilization be used in nodes other than the root node */
    SCIP_Bool             usecolpool;         /**< should the colpool be checked for negative redcost cols before solving the pricing problems? */
+   SCIP_Bool             preventduplicatecols; /**< should existing master variables be reused when transferring an original solution
+                                              *   instead of creating duplicate columns? */
    SCIP_Bool             useartificialvars;  /**< use artificial variables to make RMP feasible (instead of applying Farkas pricing) */
    SCIP_Real             maxobj;             /**< maxobj bound that can be used for big M objective of artificial variables */
    SCIP_Bool             usemaxobj;          /**< use maxobj for big M objective of artificial variables */
@@ -287,6 +293,123 @@ struct SCIP_EventhdlrData
    GCG*                 gcg;                 /**< GCG data structure */
 };
 
+/** key identifying the column represented by a master variable */
+struct GCG_MastervarKey
+{
+   SCIP_VAR*             mastervar;          /**< master variable represented by this key, or NULL for a lookup key */
+   SCIP_VAR**            vars;               /**< original variables with nonzero value, sorted by problem index */
+   SCIP_Real*            vals;               /**< values of the original variables */
+   int                   nvars;              /**< number of original variables with nonzero value */
+   int                   block;              /**< pricing problem the column belongs to */
+};
+typedef struct GCG_MastervarKey GCG_MASTERVARKEY;
+
+
+/** gets the key of a master variable key (the key is the element itself) */
+static
+SCIP_DECL_HASHGETKEY(hashGetKeyMastervarkey)
+{  /*lint --e{715}*/
+   return elem;
+}
+
+/** returns whether two master variable keys describe the same column */
+static
+SCIP_DECL_HASHKEYEQ(hashKeyEqMastervarkey)
+{  /*lint --e{715}*/
+   GCG_MASTERVARKEY* mvkey1;
+   GCG_MASTERVARKEY* mvkey2;
+   int i;
+
+   mvkey1 = (GCG_MASTERVARKEY*)key1;
+   mvkey2 = (GCG_MASTERVARKEY*)key2;
+
+   if( mvkey1->block != mvkey2->block || mvkey1->nvars != mvkey2->nvars )
+      return FALSE;
+
+   for( i = 0; i < mvkey1->nvars; ++i )
+   {
+      if( mvkey1->vars[i] != mvkey2->vars[i] || !SCIPisEQ((SCIP*)userptr, mvkey1->vals[i], mvkey2->vals[i]) )
+         return FALSE;
+   }
+
+   return TRUE;
+}
+
+/** returns the hash value of a master variable key
+ *
+ *  @note mirrors GCGhashKeyValCol; like that one it does not respect tolerances
+ */
+static
+SCIP_DECL_HASHKEYVAL(hashKeyValMastervarkey)
+{  /*lint --e{715}*/
+   GCG_MASTERVARKEY* mvkey;
+   int minindex;
+   int maxindex;
+
+   mvkey = (GCG_MASTERVARKEY*)key;
+   assert(mvkey != NULL);
+
+   if( mvkey->nvars > 0 )
+   {
+      minindex = SCIPvarGetIndex(mvkey->vars[0]);
+      maxindex = SCIPvarGetIndex(mvkey->vars[mvkey->nvars-1]);
+   }
+   else
+   {
+      minindex = INT_MAX;
+      maxindex = INT_MAX;
+   }
+
+   return SCIPhashSeven(mvkey->block, mvkey->nvars, 0,
+      SCIPrealHashCode(mvkey->nvars > 0 ? mvkey->vals[0] : 0.0), minindex,
+      SCIPrealHashCode(mvkey->nvars > 0 ? mvkey->vals[mvkey->nvars-1] : 0.0), maxindex);
+}
+
+/** fills a master variable key describing the column of the given master variable
+ *
+ *  GCGcreateMasterVar stores either only nonzero entries, or - for a column without any nonzero entry - every
+ *  pricing variable with value 0 (its `trivialsol` case).
+ *
+ *  @return TRUE if the key describes the variable, FALSE if the variable mixes zero and nonzero entries and can
+ *          therefore not be described without compaction.
+ */
+static
+SCIP_Bool getMastervarKey(
+   SCIP*                 masterprob,         /**< master SCIP data structure */
+   SCIP_VAR*             mastervar,          /**< master variable to describe */
+   GCG_MASTERVARKEY*     mvkey               /**< key to fill */
+   )
+{
+   SCIP_VAR** origvars;
+   SCIP_Real* origvals;
+   int norigvars;
+   int nnonz;
+   int i;
+
+   assert(GCGvarIsMaster(mastervar));
+
+   origvars = GCGmasterVarGetOrigvars(mastervar);
+   origvals = GCGmasterVarGetOrigvals(mastervar);
+   norigvars = GCGmasterVarGetNOrigvars(mastervar);
+
+   nnonz = 0;
+   for( i = 0; i < norigvars; ++i )
+   {
+      if( !SCIPisZero(masterprob, origvals[i]) )
+         ++nnonz;
+   }
+
+   if( nnonz != 0 && nnonz != norigvars )
+      return FALSE;
+
+   mvkey->mastervar = mastervar;
+   mvkey->block = GCGvarGetBlock(mastervar);
+   mvkey->nvars = nnonz;
+   mvkey->vars = nnonz > 0 ? origvars : NULL;
+   mvkey->vals = nnonz > 0 ? origvals : NULL;
+
+   return TRUE;
+}
 
 /** information method for a parameter change of disablecutoff */
 static
@@ -4739,7 +4862,9 @@ SCIP_DECL_PRICERINITSOL(ObjPricerGcg::scip_initsol)
 
    SCIP_CALL( SCIPcreateCPUClock(scip, &(pricerdata->freeclock)) );
    SCIP_CALL( SCIPcreateCPUClock(scip, &(pricerdata->transformclock)) );
+   SCIP_CALL( SCIPcreateCPUClock(scip, &(pricerdata->duplicatecolclock)) );
 
+   pricerdata->nduplicatecols = 0;
    pricerdata->solvedsubmipsoptimal = 0;
    pricerdata->solvedsubmipsheur = 0;
    pricerdata->calls = 0;
@@ -4974,6 +5099,7 @@ SCIP_DECL_PRICEREXITSOL(ObjPricerGcg::scip_exitsol)
 
    SCIP_CALL( SCIPfreeClock(scip, &(pricerdata->freeclock)) );
    SCIP_CALL( SCIPfreeClock(scip, &(pricerdata->transformclock)) );
+   SCIP_CALL( SCIPfreeClock(scip, &(pricerdata->duplicatecolclock)) );
 
    for( i = 0; i < pricerdata->npricingprobs; ++i )
    {
@@ -5098,7 +5224,6 @@ SCIP_RETCODE ObjPricerGcg::ensureSizeArtificialvars(
    )
 {
    assert(pricerdata != NULL);
-   assert(pricerdata->artificialvars != NULL);
 
    if( pricerdata->maxartificialvars < size )
    {
@@ -5448,6 +5573,10 @@ SCIP_RETCODE GCGincludePricerGcg(
    SCIP_CALL( SCIPaddBoolParam(origprob, "pricing/masterpricer/usecolpool",
          "should the colpool be checked for negative redcost cols before solving the pricing problems?",
          &pricerdata->usecolpool, FALSE, DEFAULT_USECOLPOOL, NULL, NULL) );
+
+   SCIP_CALL( SCIPaddBoolParam(origprob, "pricing/masterpricer/preventduplicatecols",
+         "should an existing master variable be reused when an original solution is transferred to the master problem, instead of creating a duplicate column?",
+         &pricerdata->preventduplicatecols, FALSE, DEFAULT_PREVENTDUPLICATECOLS, NULL, NULL) );
 
    SCIP_CALL( SCIPaddBoolParam(origprob, "pricing/masterpricer/stabilization/hybridascent",
          "should hybridization of smoothing with an ascent method be enabled?",
@@ -5890,6 +6019,8 @@ void GCGpricerPrintStatistics(
    SCIPmessageFPrintInfo(SCIPgetMessagehdlr(masterprob), file, "Solved subMIPs Optimal Pricing   : %d\n", pricerdata->solvedsubmipsoptimal);
    SCIPmessageFPrintInfo(SCIPgetMessagehdlr(masterprob), file, "Time for transformation          : %f\n", SCIPgetClockTime(masterprob, pricerdata->transformclock));
    SCIPmessageFPrintInfo(SCIPgetMessagehdlr(masterprob), file, "Time for freeing subMIPs         : %f\n", SCIPgetClockTime(masterprob, pricerdata->freeclock));
+   SCIPmessageFPrintInfo(SCIPgetMessagehdlr(masterprob), file, "Duplicate Columns Avoided        : %d\n", pricerdata->nduplicatecols);
+   SCIPmessageFPrintInfo(SCIPgetMessagehdlr(masterprob), file, "Time for duplicate column check  : %f\n", SCIPgetClockTime(masterprob, pricerdata->duplicatecolclock));
 
 }
 
@@ -6187,19 +6318,135 @@ SCIP_RETCODE GCGmasterTransOrigSolToMasterVars(
       }
    }
 
-   /* create variables in the master problem */
+   /* create variables in the master problem and filter duplicates optionally */
    if( pricerdata != NULL )
    {
+      SCIP_HASHTABLE* mastervarhash = NULL;
+      GCG_MASTERVARKEY* mvkeys = NULL;
+      SCIP_VAR** candvars = NULL;
+      SCIP_Real* candvals = NULL;
+      int nmvkeys = 0;
+      int ncandvars = 0;
+
+      if( pricerdata->preventduplicatecols )
+      {
+         SCIP_VAR** pricedvars;
+         int npricedvars;
+
+         SCIP_CALL( SCIPstartClock(masterprob, pricerdata->duplicatecolclock) );
+
+         pricedvars = GCGmasterGetPricedvars(gcg);
+         npricedvars = GCGmasterGetNPricedvars(gcg);
+
+         /* the candidate columns are described in terms of original variables, just as the master variables are */
+         for( prob = 0; prob < pricerdata->npricingprobs; prob++ )
+            ncandvars += npricingvars[prob];
+
+         SCIP_CALL( SCIPallocBufferArray(masterprob, &mvkeys, npricedvars + pricerdata->npricingprobs) );
+         SCIP_CALL( SCIPallocBufferArray(masterprob, &candvars, MAX(ncandvars, 1)) );
+         SCIP_CALL( SCIPallocBufferArray(masterprob, &candvals, MAX(ncandvars, 1)) );
+
+         SCIP_CALL( SCIPhashtableCreate(&mastervarhash, SCIPblkmem(masterprob),
+               npricedvars + pricerdata->npricingprobs, hashGetKeyMastervarkey, hashKeyEqMastervarkey,
+               hashKeyValMastervarkey, (void*) masterprob) );
+
+         /* register the columns that already exist */
+         for( i = 0; i < npricedvars; i++ )
+         {
+            if( getMastervarKey(masterprob, pricedvars[i], &mvkeys[nmvkeys]) )
+            {
+               if( SCIPhashtableRetrieve(mastervarhash, (void*) &mvkeys[nmvkeys]) == NULL )
+               {
+                  SCIP_CALL( SCIPhashtableInsert(mastervarhash, (void*) &mvkeys[nmvkeys]) );
+                  ++nmvkeys;
+               }
+            }
+         }
+
+         ncandvars = 0;
+
+         SCIP_CALL( SCIPstopClock(masterprob, pricerdata->duplicatecolclock) );
+      }
+
       for( prob = 0; prob < pricerdata->npricingprobs; prob++ )
       {
+         GCG_MASTERVARKEY* dupkey = NULL;
          int representative;
 
          representative = GCGgetBlockRepresentative(gcg, prob);
 
-         SCIP_CALL( pricer->createNewMasterVar(NULL, NULL, pricingvars[prob], pricingvals[prob], npricingvars[prob], FALSE, representative, TRUE, &added, &newvar) );
-         assert(added);
+         if( mastervarhash != NULL )
+         {
+            GCG_MASTERVARKEY candkey;
 
-         SCIP_CALL( SCIPsetSolVal(masterprob, mastersol, newvar, 1.0) );
+            SCIP_CALL( SCIPstartClock(masterprob, pricerdata->duplicatecolclock) );
+
+            /* build the key of the column this block would create; mirrors what GCGcreateMasterVar stores, including
+             * the rounding of integral values, so that identical columns also hash identically */
+            candkey.mastervar = NULL;
+            candkey.block = representative;
+            candkey.nvars = npricingvars[prob];
+            candkey.vars = &candvars[ncandvars];
+            candkey.vals = &candvals[ncandvars];
+
+            for( j = 0; j < npricingvars[prob]; j++ )
+            {
+               SCIP_Real solval = pricingvals[prob][j];
+
+               if( SCIPvarIsIntegral(pricingvars[prob][j]) && SCIPisIntegral(masterprob, solval) )
+                  solval = SCIPround(masterprob, solval);
+
+               candvars[ncandvars] = GCGpricingVarGetOrigvars(pricingvars[prob][j])[0];
+               candvals[ncandvars] = solval;
+               ++ncandvars;
+            }
+
+            dupkey = (GCG_MASTERVARKEY*) SCIPhashtableRetrieve(mastervarhash, (void*) &candkey);
+
+            SCIP_CALL( SCIPstopClock(masterprob, pricerdata->duplicatecolclock) );
+         }
+
+         if( dupkey != NULL )
+         {
+            /* an identical column exists, reuse it instead of creating a copy */
+            newvar = dupkey->mastervar;
+            ++pricerdata->nduplicatecols;
+
+            if( SCIPisZero(masterprob, SCIPvarGetUbGlobal(newvar)) )
+            {
+               SCIPdebugMessage("transferred solution will be rejected: master variable <%s> reused for block %d "
+                  "is fixed to zero\n", SCIPvarGetName(newvar), prob);
+            }
+         }
+         else
+         {
+            SCIP_CALL( pricer->createNewMasterVar(NULL, NULL, pricingvars[prob], pricingvals[prob], npricingvars[prob], FALSE, representative, TRUE, &added, &newvar) );
+            assert(added);
+
+            if( mastervarhash != NULL )
+            {
+               SCIP_CALL( SCIPstartClock(masterprob, pricerdata->duplicatecolclock) );
+
+               /* register the new column so that later blocks of this solution do not duplicate it either */
+               if( getMastervarKey(masterprob, newvar, &mvkeys[nmvkeys]) )
+               {
+                  SCIP_CALL( SCIPhashtableInsert(mastervarhash, (void*) &mvkeys[nmvkeys]) );
+                  ++nmvkeys;
+               }
+
+               SCIP_CALL( SCIPstopClock(masterprob, pricerdata->duplicatecolclock) );
+            }
+         }
+
+         SCIP_CALL( SCIPincSolVal(masterprob, mastersol, newvar, 1.0) );
+      }
+
+      if( mastervarhash != NULL )
+      {
+         SCIPhashtableFree(&mastervarhash);
+         SCIPfreeBufferArray(masterprob, &candvals);
+         SCIPfreeBufferArray(masterprob, &candvars);
+         SCIPfreeBufferArray(masterprob, &mvkeys);
       }
    }
 

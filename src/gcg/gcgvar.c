@@ -130,7 +130,9 @@ SCIP_DECL_VARDELTRANS(gcgvardeltrans)
    assert((*vardata)->vartype == GCG_VARTYPE_MASTER);
    SCIPfreeBlockMemoryArrayNull(scip, &((*vardata)->data.mastervardata.origvals), (*vardata)->data.mastervardata.maxorigvars);
    SCIPfreeBlockMemoryArrayNull(scip, &((*vardata)->data.mastervardata.origvars), (*vardata)->data.mastervardata.maxorigvars);
-   SCIPhashmapFree(&((*vardata)->data.mastervardata.origvar2val));
+
+   if( (*vardata)->data.mastervardata.origvar2val != NULL )
+      SCIPhashmapFree(&((*vardata)->data.mastervardata.origvar2val));
 
    SCIPfreeBlockMemory(scip, vardata);
 
@@ -1570,6 +1572,12 @@ SCIP_RETCODE GCGcreateMasterVar(
       j = i;
    }
    assert(j == newvardata->data.mastervardata.norigvars);
+
+#ifndef NDEBUG
+   for( i = 1; i < newvardata->data.mastervardata.norigvars; ++i )
+      assert(SCIPvarGetProbindex(newvardata->data.mastervardata.origvars[i-1])
+           < SCIPvarGetProbindex(newvardata->data.mastervardata.origvars[i]));
+#endif
 
    return SCIP_OKAY;
 }

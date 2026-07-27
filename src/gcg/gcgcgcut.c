@@ -52,7 +52,7 @@ struct GCG_MastersepacutData
 /**< creates a Chvatal-Gomory cut */
 SCIP_RETCODE GCGcreateChvatalGomoryCut(
    GCG*                       gcg,                   /**< GCG data structure */
-   GCG_MASTERSEPACUT**   mastersepacut,         /**< pointer to store separator master cut */
+   GCG_MASTERSEPACUT**        mastersepacut,         /**< pointer to store separator master cut */
    GCG_SEPA*                  sepa,                  /**< separator creating this cut */
    GCG_VARHISTORY*            varhistory,            /**< variables history of Chvatal-Gomory cut */
    SCIP_Real*                 weights,               /**< weights which were used to create the cut */
@@ -249,6 +249,11 @@ SCIP_RETCODE GCGchvatalGomoryCutGetVariableCoefficient(
    assert(success);
    SCIP_CALL( SCIPgetConsVals(pricingscip, pricingconss[0], pricingconscoeffs, npricingconsvars, &success) );
    assert(success);
+
+#ifndef NDEBUG
+   for( i = 1; i < nvars; i++ )
+      assert(SCIPvarCompare(vars[i-1], vars[i]) < 0);
+#endif
 
    /* compute w^TAx using the pricing constraint */
    for( i = 0; i < npricingconsvars; i++ )

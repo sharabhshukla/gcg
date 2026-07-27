@@ -88,6 +88,13 @@ GCG_DECL_SORTPTRCOMP(mastervarcomp)
    norigvars2 = GCGmasterVarGetNOrigvars(mastervar2);
    origvals2 = GCGmasterVarGetOrigvals(mastervar2);
 
+#ifndef NDEBUG
+   for( i = 1; i < norigvars1; ++i )
+      assert(SCIPvarGetProbindex(origvars1[i-1]) < SCIPvarGetProbindex(origvars1[i]));
+   for( j = 1; j < norigvars2; ++j )
+      assert(SCIPvarGetProbindex(origvars2[j-1]) < SCIPvarGetProbindex(origvars2[j]));
+#endif
+
    for( i = 0, j = 0; i < norigvars1 || j < norigvars2; )
    {
       if( i < norigvars1 && SCIPvarGetType(origvars1[i]) > SCIP_VARTYPE_INTEGER )

@@ -2,13 +2,41 @@
 @section RN410 GCG 4.1.0
 *************************
 
+New features:
+-------------
+
+- sepa_subsetrow (still experimental): add strategy that enumerates all SR cuts (new default)
+- mastersepacut interface: handle removable cuts
+
+Bug fixes
+---------
+
+- sepa_subsetrow: fix memory bug and index handling of master conss
+
 Miscellaneous
 -------------
 
 - modified ObjPricerGcg::setPricingObjs() to use buffer arrays instead of calling SCIPaddVarObj() multiple times
+- reuse existing columns for translated solutions of the original problem (see new parameter)
+
+New/changed parameters:
+-----------------------
+
+- sepa_subsetrow: renamed parameters ('maxsepacuts' to 'maxcutcands', 'maxsepacutsroot' to 'maxcutcandsroot', 'maxcutcands' to 'maxcuts')
+- new parameter "pricing/masterpricer/preventduplicatecols" (default: TRUE)
 
 
 @page RN40 Release notes for GCG 4.0
+@section RN403 GCG 4.0.3
+*************************
+
+Bug fixes
+---------
+
+- fix segfault
+- fix (some) problems with Benders mode
+
+
 @section RN402 GCG 4.0.2
 *************************
 

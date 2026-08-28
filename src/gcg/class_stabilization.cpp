@@ -721,12 +721,16 @@ SCIP_Real Stabilization::calculateSubgradientProduct(
             if( !GCGisPricingprobRelevant(gcg, block) )
                continue;
 
-            assert(pricingcols[block] != NULL);
-
-            SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(vars[j]);
-            assert(GCGvarIsPricing(pricingvar));
-            val = GCGcolGetSolVal(pricingcols[block], pricingvar);
-            assert(!SCIPisInfinity(masterprob, ABS(val)));
+            /* pricingcols[block] is NULL if the pricing problem for this block
+             * priced out no column (e.g. converged with no improving column);
+             * treat its contribution to this constraint as zero. */
+            if( pricingcols[block] != NULL )
+            {
+               SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(vars[j]);
+               assert(GCGvarIsPricing(pricingvar));
+               val = GCGcolGetSolVal(pricingcols[block], pricingvar);
+               assert(!SCIPisInfinity(masterprob, ABS(val)));
+            }
          }
          assert(stabcenterconsvals != NULL);
          assert(vals != NULL);
@@ -794,12 +798,16 @@ SCIP_Real Stabilization::calculateSubgradientProduct(
             if( !GCGisPricingprobRelevant(gcg, block) )
                continue;
 
-            assert(pricingcols[block] != NULL);
-
-            SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(var);
-            assert(GCGvarIsPricing(pricingvar));
-            val = GCGcolGetSolVal(pricingcols[block], pricingvar);
-            assert(!SCIPisInfinity(masterprob, ABS(val)));
+            /* pricingcols[block] is NULL if the pricing problem for this block
+             * priced out no column (e.g. converged with no improving column);
+             * treat its contribution to this cut as zero. */
+            if( pricingcols[block] != NULL )
+            {
+               SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(var);
+               assert(GCGvarIsPricing(pricingvar));
+               val = GCGcolGetSolVal(pricingcols[block], pricingvar);
+               assert(!SCIPisInfinity(masterprob, ABS(val)));
+            }
          }
          assert(stabcenteroriginalsepacutvals != NULL);
          assert(vals != NULL);
@@ -873,12 +881,18 @@ SCIP_Real Stabilization::calculateSubgradientProduct(
          block = GCGpricingmodificationGetBlock(pricingmods[j]);
          assert(pricingmods[j] != NULL);
          assert(GCGisPricingprobRelevant(gcg, block));
-         assert(pricingcols[block] != NULL);
 
-         SCIP_VAR* pricingvar = GCGpricingmodificationGetCoefVar(pricingmods[j]);
-         assert(GCGvarIsInferredPricing(pricingvar));
-         val = GCGcolGetSolVal(pricingcols[block], pricingvar);
-         assert(!SCIPisInfinity(masterprob, ABS(val)));
+         /* pricingcols[block] is NULL if the pricing problem for this block
+          * priced out no column (e.g. converged with no improving column);
+          * treat its contribution to this extended master cons as zero. */
+         val = 0.0;
+         if( pricingcols[block] != NULL )
+         {
+            SCIP_VAR* pricingvar = GCGpricingmodificationGetCoefVar(pricingmods[j]);
+            assert(GCGvarIsInferredPricing(pricingvar));
+            val = GCGcolGetSolVal(pricingcols[block], pricingvar);
+            assert(!SCIPisInfinity(masterprob, ABS(val)));
+         }
 
          gradientproduct -= (dual - stabcenterbranchmasterconsvals[i]) * val;
       }
@@ -909,10 +923,11 @@ SCIP_Real Stabilization::calculateSubgradientProduct(
       if( SCIPisFeasZero(origprob, stabdual) )
          continue;
 
-      assert(pricingcols[block] != NULL);
-
+      /* pricingcols[block] is NULL if the pricing problem for this block
+       * priced out no column (e.g. converged with no improving column);
+       * treat its contribution to this linking cons as zero. */
       SCIP_Real masterval = SCIPgetSolVal(masterprob, (SCIP_SOL*) NULL, mastervar);
-      SCIP_Real pricingval = GCGcolGetSolVal(pricingcols[block], pricingvar);
+      SCIP_Real pricingval = pricingcols[block] != NULL ? GCGcolGetSolVal(pricingcols[block], pricingvar) : 0.0;
       assert(!SCIPisInfinity(masterprob, ABS(masterval)));
       assert(!SCIPisInfinity(masterprob, ABS(pricingval)));
       assert(!SCIPisInfinity(masterprob, ABS(dual)));
@@ -989,12 +1004,16 @@ SCIP_RETCODE Stabilization::calculateSubgradient(
             if( !GCGisPricingprobRelevant(gcg, block) )
                continue;
 
-            assert(pricingcols[block] != NULL);
-
-            SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(vars[j]);
-            assert(GCGvarIsPricing(pricingvar));
-            val = GCGcolGetSolVal(pricingcols[block], pricingvar);
-            assert(!SCIPisInfinity(masterprob, ABS(val)));
+            /* pricingcols[block] is NULL if the pricing problem for this block
+             * priced out no column (e.g. converged with no improving column);
+             * treat its contribution to this constraint as zero. */
+            if( pricingcols[block] != NULL )
+            {
+               SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(vars[j]);
+               assert(GCGvarIsPricing(pricingvar));
+               val = GCGcolGetSolVal(pricingcols[block], pricingvar);
+               assert(!SCIPisInfinity(masterprob, ABS(val)));
+            }
          }
          assert(vals != NULL);
          activity += vals[j] * val;
@@ -1062,12 +1081,16 @@ SCIP_RETCODE Stabilization::calculateSubgradient(
             if( !GCGisPricingprobRelevant(gcg, block) )
                continue;
 
-            assert(pricingcols[block] != NULL);
-
-            SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(var);
-            assert(GCGvarIsPricing(pricingvar));
-            val = GCGcolGetSolVal(pricingcols[block], pricingvar);
-            assert(!SCIPisInfinity(masterprob, ABS(val)));
+            /* pricingcols[block] is NULL if the pricing problem for this block
+             * priced out no column (e.g. converged with no improving column);
+             * treat its contribution to this cut as zero. */
+            if( pricingcols[block] != NULL )
+            {
+               SCIP_VAR* pricingvar = GCGoriginalVarGetPricingVar(var);
+               assert(GCGvarIsPricing(pricingvar));
+               val = GCGcolGetSolVal(pricingcols[block], pricingvar);
+               assert(!SCIPisInfinity(masterprob, ABS(val)));
+            }
          }
          assert(stabcenteroriginalsepacutvals != NULL);
          assert(vals != NULL);
@@ -1144,12 +1167,18 @@ SCIP_RETCODE Stabilization::calculateSubgradient(
          block = GCGpricingmodificationGetBlock(pricingmods[j]);
          assert(pricingmods[j] != NULL);
          assert(GCGisPricingprobRelevant(gcg, block));
-         assert(pricingcols[block] != NULL);
 
-         SCIP_VAR* pricingvar = GCGpricingmodificationGetCoefVar(pricingmods[j]);
-         assert(GCGvarIsInferredPricing(pricingvar));
-         val = GCGcolGetSolVal(pricingcols[block], pricingvar);
-         assert(!SCIPisInfinity(masterprob, ABS(val)));
+         /* pricingcols[block] is NULL if the pricing problem for this block
+          * priced out no column (e.g. converged with no improving column);
+          * treat its contribution to this extended master cons as zero. */
+         val = 0.0;
+         if( pricingcols[block] != NULL )
+         {
+            SCIP_VAR* pricingvar = GCGpricingmodificationGetCoefVar(pricingmods[j]);
+            assert(GCGvarIsInferredPricing(pricingvar));
+            val = GCGcolGetSolVal(pricingcols[block], pricingvar);
+            assert(!SCIPisInfinity(masterprob, ABS(val)));
+         }
 
          activity += val;
       }
@@ -1187,11 +1216,13 @@ SCIP_RETCODE Stabilization::calculateSubgradient(
       block = linkingconsblocks[i];
       pricingvar = GCGlinkingVarGetPricingVars(GCGmasterVarGetOrigvars(mastervar)[0])[block];
       assert(GCGvarIsPricing(pricingvar));
-      assert(pricingcols[block] != NULL);
 
+      /* pricingcols[block] is NULL if the pricing problem for this block
+       * priced out no column (e.g. converged with no improving column);
+       * treat its contribution to this linking cons as zero. */
       assert(stabcenterlinkingconsvals != NULL);
       SCIP_Real masterval = SCIPgetSolVal(masterprob, (SCIP_SOL*) NULL, mastervar);
-      SCIP_Real pricingval = GCGcolGetSolVal(pricingcols[block], pricingvar);
+      SCIP_Real pricingval = pricingcols[block] != NULL ? GCGcolGetSolVal(pricingcols[block], pricingvar) : 0.0;
       assert(!SCIPisInfinity(masterprob, ABS(masterval)));
       assert(!SCIPisInfinity(masterprob, ABS(pricingval)));
       activity = (masterval - pricingval);
